@@ -1,6 +1,6 @@
 from django.contrib import admin
 
-from .models import DailyMacroLog, Meal, MealItem, Person
+from .models import DailyMacroLog, MealEntry, Person
 
 
 @admin.register(Person)
@@ -10,16 +10,10 @@ class PersonAdmin(admin.ModelAdmin):
     search_fields = ("name", "notes")
 
 
-class MealItemInline(admin.TabularInline):
-    model = MealItem
+class MealEntryInline(admin.TabularInline):
+    model = MealEntry
     extra = 1
     autocomplete_fields = ("food",)
-
-
-class MealInline(admin.StackedInline):
-    model = Meal
-    extra = 1
-    show_change_link = True
 
 
 @admin.register(DailyMacroLog)
@@ -34,22 +28,13 @@ class DailyMacroLogAdmin(admin.ModelAdmin):
     list_filter = ("date", "person")
     search_fields = ("person__name", "notes")
     autocomplete_fields = ("person",)
-    inlines = [MealInline]
+    inlines = [MealEntryInline]
 
 
-@admin.register(Meal)
-class MealAdmin(admin.ModelAdmin):
-    list_display = ("daily_log", "name", "meal_type", "order")
+@admin.register(MealEntry)
+class MealEntryAdmin(admin.ModelAdmin):
+    list_display = ("daily_log", "meal_type", "food", "servings")
     list_filter = ("meal_type", "daily_log__date", "daily_log__person")
-    search_fields = ("name", "notes", "daily_log__person__name")
-    autocomplete_fields = ("daily_log",)
-    inlines = [MealItemInline]
-
-
-@admin.register(MealItem)
-class MealItemAdmin(admin.ModelAdmin):
-    list_display = ("meal", "food", "servings")
-    list_filter = ("meal__daily_log__date", "meal__daily_log__person")
-    search_fields = ("meal__name", "food__name")
-    autocomplete_fields = ("meal", "food")
+    search_fields = ("food__name", "daily_log__person__name")
+    autocomplete_fields = ("daily_log", "food")
 

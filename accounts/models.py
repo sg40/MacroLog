@@ -131,9 +131,13 @@ class DailyMacroLog(models.Model):
         return f"{self.person.name} - {self.date}"
 
 
-class Meal(models.Model):
+class MealEntry(models.Model):
     """
-    A single meal (e.g. Breakfast, Lunch, Snack) within a DailyMacroLog.
+    A single food portion within a specific meal slot (breakfast/lunch/dinner/etc.)
+    for a given person's DailyMacroLog.
+
+    Multiple MealEntry rows with the same (daily_log, meal_type) together form
+    the full meal and can contain multiple different foods.
     """
 
     MEAL_TYPE_CHOICES = [
@@ -147,53 +151,22 @@ class Meal(models.Model):
     daily_log = models.ForeignKey(
         DailyMacroLog,
         on_delete=models.CASCADE,
-        related_name="meals",
-    )
-    name = models.CharField(
-        max_length=100,
-        help_text='e.g. "Breakfast", "Lunch", or a custom name like "Post-workout".',
+        related_name="meal_entries",
     )
     meal_type = models.CharField(
         max_length=20,
         choices=MEAL_TYPE_CHOICES,
         default="other",
     )
-    order = models.PositiveIntegerField(
-        default=1,
-        help_text="Controls display order of meals within the day (1 = first).",
-    )
-
-    notes = models.TextField(
-        blank=True,
-        help_text="Optional notes about this specific meal.",
-    )
-
-    class Meta:
-        ordering = ["daily_log__date", "order", "id"]
-
-    def __str__(self) -> str:
-        return f"{self.daily_log.person.name} - {self.daily_log.date} - {self.name}"
-
-
-class MealItem(models.Model):
-    """
-    A single food (or recipe) and its serving size within a specific Meal.
-    """
-
-    meal = models.ForeignKey(
-        Meal,
-        on_delete=models.CASCADE,
-        related_name="items",
-    )
     food = models.ForeignKey(
         Food,
         on_delete=models.PROTECT,
-        related_name="meal_items",
+        related_name="meal_entries",
     )
     servings = models.DecimalField(
         max_digits=6,
         decimal_places=2,
-        help_text="How many servings of this food in the meal (e.g. 1.5).",
+        help_text="How many servings of this food (e.g. 1.5).",
     )
 
     # Optional: store pre-calculated macros at the time of planning.
@@ -203,31 +176,31 @@ class MealItem(models.Model):
         decimal_places=2,
         null=True,
         blank=True,
-        help_text="Total grams of protein from this item (optional cache).",
+        help_text="Total grams of protein from this entry (optional cache).",
     )
     carbs_grams = models.DecimalField(
         max_digits=7,
         decimal_places=2,
         null=True,
         blank=True,
-        help_text="Total grams of carbohydrates from this item (optional cache).",
+        help_text="Total grams of carbohydrates from this entry (optional cache).",
     )
     fats_grams = models.DecimalField(
         max_digits=7,
         decimal_places=2,
         null=True,
         blank=True,
-        help_text="Total grams of fat from this item (optional cache).",
+        help_text="Total grams of fat from this entry (optional cache).",
     )
 
     notes = models.TextField(
         blank=True,
-        help_text="Optional notes for this specific item (e.g. adjustments, brand detail).",
+        help_text="Optional notes for this entry (e.g. adjustments, brand detail).",
     )
 
     class Meta:
-        ordering = ["meal__order", "id"]
+        ordering = ["daily_log__date", "meal_type", "id"]
 
     def __str__(self) -> str:
-        return f"{self.meal} - {self.food.name} x {self.servings}"
+        return f"{self.daily_log.person.name} - {self.daily_log.date} - {self.meal_type} - {self.food.name} x {self.servings}"
 

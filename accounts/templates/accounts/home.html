@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Today's Requirements</title>
+  </head>
+  <body>
+    <h1>Today's Requirements</h1>
+
+    {% if people %}
+      <ul>
+        {% for person in people %}
+          <li>
+            <strong>{{ person.name }}</strong>
+            <br>
+            Protein target: {{ person.protein_grams|default_if_none:"-" }}g
+            <br>
+            Carbs target: {{ person.carbs_grams|default_if_none:"-" }}g
+            <br>
+            Fats target: {{ person.fats_grams|default_if_none:"-" }}g
+          </li>
+        {% endfor %}
+      </ul>
+    {% else %}
+      <p>No people have been set up yet. Add some in the Django admin.</p>
+    {% endif %}
+  </body>
+</html>
+
+
