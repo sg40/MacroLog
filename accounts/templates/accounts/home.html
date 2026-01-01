@@ -2,10 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8">
-    <title>Today's Requirements</title>
+    <title>Today's Goals</title>
   </head>
   <body>
-    <h1>Today's Requirements</h1>
+    <h1>Today's Goals - {% now "F j, Y" %}</h1>
 
     {% if people %}
       <ul>
@@ -18,6 +18,8 @@
             Carbs target: {{ person.carbs_grams|default_if_none:"-" }}g
             <br>
             Fats target: {{ person.fats_grams|default_if_none:"-" }}g
+            <br>
+            <a href="{% url 'meal_log' person.name|lower %}">Log {{ person.name }}'s meals</a>
           </li>
         {% endfor %}
       </ul>

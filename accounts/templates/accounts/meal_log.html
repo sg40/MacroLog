@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <title>Meal Log - {{ person.name }}</title>
+  </head>
+  <body>
+    <h1>Meal Log - {{ person.name }} - {% now "F j, Y" %}</h1>
+
+    <div id="breakfast-section">
+      <h2>Breakfast:</h2>
+      <div class="meal-foods" data-meal="breakfast">
+        <div class="food-item">
+          <select name="food" class="food-select">
+            <option value="">Choose food selection</option>
+            {% for food in foods %}
+              <option value="{{ food.id }}">{{ food.name }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="remove-food" onclick="removeFoodItem(this)" style="display:none;">Remove</button>
+        </div>
+      </div>
+      <button type="button" onclick="addFoodItem('breakfast')">Add Food</button>
+    </div>
+
+    <div id="lunch-section">
+      <h2>Lunch:</h2>
+      <div class="meal-foods" data-meal="lunch">
+        <div class="food-item">
+          <select name="food" class="food-select">
+            <option value="">Choose food selection</option>
+            {% for food in foods %}
+              <option value="{{ food.id }}">{{ food.name }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="remove-food" onclick="removeFoodItem(this)" style="display:none;">Remove</button>
+        </div>
+      </div>
+      <button type="button" onclick="addFoodItem('lunch')">Add Food</button>
+    </div>
+
+    <div id="dinner-section">
+      <h2>Dinner:</h2>
+      <div class="meal-foods" data-meal="dinner">
+        <div class="food-item">
+          <select name="food" class="food-select">
+            <option value="">Choose food selection</option>
+            {% for food in foods %}
+              <option value="{{ food.id }}">{{ food.name }}</option>
+            {% endfor %}
+          </select>
+          <button type="button" class="remove-food" onclick="removeFoodItem(this)" style="display:none;">Remove</button>
+        </div>
+      </div>
+      <button type="button" onclick="addFoodItem('dinner')">Add Food</button>
+    </div>
+
+    <div style="margin-top: 20px;">
+      <button type="button" onclick="calculateServings()" style="padding: 10px 20px; font-size: 16px;">Calculate Servings</button>
+    </div>
+
+    <div id="results" style="margin-top: 20px; display: none;">
+      <h2>Calculated Servings:</h2>
+      <div id="results-content"></div>
+    </div>
+
+    <script>
+      function addFoodItem(mealType) {
+        const mealSection = document.querySelector(`[data-meal="${mealType}"]`);
+        const firstFoodItem = mealSection.querySelector('.food-item');
+        const foodSelect = firstFoodItem.querySelector('.food-select');
+        
+        // Clone the first food item
+        const newFoodItem = firstFoodItem.cloneNode(true);
+        const newSelect = newFoodItem.querySelector('.food-select');
+        newSelect.value = ''; // Reset to default option
+        const newRemoveButton = newFoodItem.querySelector('.remove-food');
+        newRemoveButton.style.display = 'inline-block';
+        
+        // Show remove buttons on all items if there's more than one
+        const foodItems = mealSection.querySelectorAll('.food-item');
+        if (foodItems.length >= 1) {
+          foodItems.forEach(item => {
+            item.querySelector('.remove-food').style.display = 'inline-block';
+          });
+        }
+        
+        mealSection.appendChild(newFoodItem);
+      }
+
+      function removeFoodItem(button) {
+        const foodItem = button.closest('.food-item');
+        const mealSection = foodItem.closest('.meal-foods');
+        const remainingItems = mealSection.querySelectorAll('.food-item');
+        
+        // Don't remove if it's the last item
+        if (remainingItems.length <= 1) {
+          return;
+        }
+        
+        foodItem.remove();
+        
+        // Hide remove buttons if only one item remains
+        const finalItems = mealSection.querySelectorAll('.food-item');
+        if (finalItems.length === 1) {
+          finalItems[0].querySelector('.remove-food').style.display = 'none';
+        }
+      }
+
+      function getCookie(name) {
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+          const cookies = document.cookie.split(';');
+          for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+              cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+              break;
+            }
+          }
+        }
+        return cookieValue;
+      }
+
+      function calculateServings() {
+        // Collect all selected foods for each meal
+        const mealData = {
+          breakfast: [],
+          lunch: [],
+          dinner: []
+        };
+
+        ['breakfast', 'lunch', 'dinner'].forEach(mealType => {
+          const mealSection = document.querySelector(`[data-meal="${mealType}"]`);
+          const foodSelects = mealSection.querySelectorAll('.food-select');
+          foodSelects.forEach(select => {
+            if (select.value) {
+              mealData[mealType].push(parseInt(select.value));
+            }
+          });
+        });
+
+        // Get CSRF token
+        const csrftoken = getCookie('csrftoken');
+
+        // Send to server
+        fetch('{% url "calculate_servings" person.name|lower %}', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': csrftoken
+          },
+          body: JSON.stringify(mealData)
+        })
+        .then(response => response.json())
+        .then(data => {
+          if (data.error) {
+            alert('Error: ' + data.error);
+            return;
+          }
+          
+          // Display results
+          displayResults(data);
+        })
+        .catch(error => {
+          console.error('Error:', error);
+          alert('An error occurred while calculating servings.');
+        });
+      }
+
+      function displayResults(data) {
+        const resultsDiv = document.getElementById('results');
+        const contentDiv = document.getElementById('results-content');
+        
+        let html = '';
+        
+        ['breakfast', 'lunch', 'dinner'].forEach(mealType => {
+          const mealTotal = data[mealType + '_total'];
+          const mealGoal = data[mealType + '_goal'];
+          
+          if (data[mealType] && data[mealType].length > 0) {
+            html += `<div style="margin-bottom: 20px; border: 1px solid #ccc; padding: 10px;">`;
+            html += `<h3>${mealType.charAt(0).toUpperCase() + mealType.slice(1)}</h3>`;
+            
+            // Show goal
+            html += `<p><strong>Goal:</strong> Protein: ${mealGoal.protein.toFixed(1)}g, `;
+            html += `Carbs: ${mealGoal.carbs.toFixed(1)}g (max), `;
+            html += `Fats: ${mealGoal.fats.toFixed(1)}g</p>`;
+            
+            // Show foods
+            html += '<ul style="list-style-type: none; padding-left: 0;">';
+            data[mealType].forEach(item => {
+              const servingText = item.serving_name ? ` (${item.serving_name})` : '';
+              html += `<li style="margin-bottom: 8px;">`;
+              html += `<strong>${item.food_name}:</strong> ${item.servings.toFixed(2)} servings${servingText}<br>`;
+              html += `<span style="margin-left: 20px; color: #666;">`;
+              html += `Protein: ${item.protein.toFixed(1)}g, `;
+              html += `Carbs: ${item.carbs.toFixed(1)}g, `;
+              html += `Fats: ${item.fats.toFixed(1)}g`;
+              html += `</span></li>`;
+            });
+            html += '</ul>';
+            
+            // Show meal total
+            if (mealTotal) {
+              html += `<p><strong>Meal Total:</strong> `;
+              html += `Protein: ${mealTotal.protein.toFixed(1)}g, `;
+              html += `Carbs: ${mealTotal.carbs.toFixed(1)}g, `;
+              html += `Fats: ${mealTotal.fats.toFixed(1)}g</p>`;
+            }
+            
+            html += `</div>`;
+          }
+        });
+
+        if (data.supplements && data.supplements.length > 0) {
+          html += '<div style="margin-bottom: 20px; border: 1px solid #ccc; padding: 10px; background-color: #f0f0f0;">';
+          html += '<h3>Additional Supplements Needed:</h3><ul style="list-style-type: none; padding-left: 0;">';
+          data.supplements.forEach(supp => {
+            const servingText = supp.serving_name ? ` (${supp.serving_name})` : '';
+            html += `<li style="margin-bottom: 8px;">`;
+            html += `<strong>${supp.name}:</strong> ${supp.servings.toFixed(2)} servings${servingText}<br>`;
+            html += `<span style="margin-left: 20px; color: #666;">`;
+            html += `Protein: ${supp.protein.toFixed(1)}g, `;
+            html += `Carbs: ${supp.carbs.toFixed(1)}g, `;
+            html += `Fats: ${supp.fats.toFixed(1)}g`;
+            html += `</span></li>`;
+          });
+          html += '</ul></div>';
+        }
+
+        // Show daily totals
+        if (data.daily_totals && data.daily_goals) {
+          html += '<div style="margin-top: 20px; border: 2px solid #333; padding: 10px; background-color: #e8e8e8;">';
+          html += '<h3>Daily Totals:</h3>';
+          html += `<p><strong>Actual:</strong> `;
+          html += `Protein: ${data.daily_totals.protein.toFixed(1)}g, `;
+          html += `Carbs: ${data.daily_totals.carbs.toFixed(1)}g, `;
+          html += `Fats: ${data.daily_totals.fats.toFixed(1)}g</p>`;
+          html += `<p><strong>Goals:</strong> `;
+          html += `Protein: ${data.daily_goals.protein.toFixed(1)}g, `;
+          html += `Carbs: ${data.daily_goals.carbs.toFixed(1)}g (max), `;
+          html += `Fats: ${data.daily_goals.fats.toFixed(1)}g</p>`;
+          html += '</div>';
+        }
+
+        contentDiv.innerHTML = html;
+        resultsDiv.style.display = 'block';
+      }
+    </script>
+  </body>
+</html>
