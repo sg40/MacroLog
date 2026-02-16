@@ -5,10 +5,11 @@
     <title>Meal Log - {{ person.name }}</title>
   </head>
   <body>
+    <p><a href="{% url 'home' %}">← Home</a></p>
     <h1>Meal Log - {{ person.name }} - {% now "F j, Y" %}</h1>
 
     <div id="breakfast-section">
-      <h2>Breakfast:</h2>
+      <h2>Breakfast (set your servings):</h2>
       <div class="meal-foods" data-meal="breakfast">
         <div class="food-item">
           <select name="food" class="food-select">
@@ -17,6 +18,7 @@
               <option value="{{ food.id }}">{{ food.name }}</option>
             {% endfor %}
           </select>
+          <input type="number" step="0.01" min="0" placeholder="Servings" class="serving-input" style="width: 100px; margin-left: 10px;">
           <button type="button" class="remove-food" onclick="removeFoodItem(this)" style="display:none;">Remove</button>
         </div>
       </div>
@@ -24,7 +26,7 @@
     </div>
 
     <div id="lunch-section">
-      <h2>Lunch:</h2>
+      <h2>Lunch (set your servings):</h2>
       <div class="meal-foods" data-meal="lunch">
         <div class="food-item">
           <select name="food" class="food-select">
@@ -33,6 +35,7 @@
               <option value="{{ food.id }}">{{ food.name }}</option>
             {% endfor %}
           </select>
+          <input type="number" step="0.01" min="0" placeholder="Servings" class="serving-input" style="width: 100px; margin-left: 10px;">
           <button type="button" class="remove-food" onclick="removeFoodItem(this)" style="display:none;">Remove</button>
         </div>
       </div>
@@ -40,7 +43,7 @@
     </div>
 
     <div id="dinner-section">
-      <h2>Dinner:</h2>
+      <h2>Dinner (servings will be calculated):</h2>
       <div class="meal-foods" data-meal="dinner">
         <div class="food-item">
           <select name="food" class="food-select">
@@ -74,6 +77,10 @@
         const newFoodItem = firstFoodItem.cloneNode(true);
         const newSelect = newFoodItem.querySelector('.food-select');
         newSelect.value = ''; // Reset to default option
+        const servingInput = newFoodItem.querySelector('.serving-input');
+        if (servingInput) {
+          servingInput.value = ''; // Reset serving input
+        }
         const newRemoveButton = newFoodItem.querySelector('.remove-food');
         newRemoveButton.style.display = 'inline-block';
         
@@ -123,21 +130,36 @@
       }
 
       function calculateServings() {
-        // Collect all selected foods for each meal
+        // Collect foods and servings for breakfast/lunch (user-set), foods only for dinner (calculated)
         const mealData = {
           breakfast: [],
           lunch: [],
           dinner: []
         };
 
-        ['breakfast', 'lunch', 'dinner'].forEach(mealType => {
+        // Breakfast and lunch: collect food ID and servings
+        ['breakfast', 'lunch'].forEach(mealType => {
           const mealSection = document.querySelector(`[data-meal="${mealType}"]`);
-          const foodSelects = mealSection.querySelectorAll('.food-select');
-          foodSelects.forEach(select => {
-            if (select.value) {
-              mealData[mealType].push(parseInt(select.value));
+          const foodItems = mealSection.querySelectorAll('.food-item');
+          foodItems.forEach(item => {
+            const select = item.querySelector('.food-select');
+            const servingInput = item.querySelector('.serving-input');
+            if (select.value && servingInput && servingInput.value) {
+              mealData[mealType].push({
+                food_id: parseInt(select.value),
+                servings: parseFloat(servingInput.value)
+              });
             }
           });
+        });
+
+        // Dinner: collect only food IDs (servings will be calculated)
+        const dinnerSection = document.querySelector(`[data-meal="dinner"]`);
+        const dinnerSelects = dinnerSection.querySelectorAll('.food-select');
+        dinnerSelects.forEach(select => {
+          if (select.value) {
+            mealData.dinner.push(parseInt(select.value));
+          }
         });
 
         // Get CSRF token
@@ -174,44 +196,93 @@
         
         let html = '';
         
-        ['breakfast', 'lunch', 'dinner'].forEach(mealType => {
-          const mealTotal = data[mealType + '_total'];
-          const mealGoal = data[mealType + '_goal'];
+        // Breakfast (user-set)
+        if (data.breakfast && data.breakfast.length > 0) {
+          const mealTotal = data.breakfast_total;
+          html += `<div style="margin-bottom: 20px; border: 1px solid #ccc; padding: 10px;">`;
+          html += `<h3>Breakfast (Your Servings)</h3>`;
           
-          if (data[mealType] && data[mealType].length > 0) {
-            html += `<div style="margin-bottom: 20px; border: 1px solid #ccc; padding: 10px;">`;
-            html += `<h3>${mealType.charAt(0).toUpperCase() + mealType.slice(1)}</h3>`;
-            
-            // Show goal
-            html += `<p><strong>Goal:</strong> Protein: ${mealGoal.protein.toFixed(1)}g, `;
-            html += `Carbs: ${mealGoal.carbs.toFixed(1)}g (max), `;
-            html += `Fats: ${mealGoal.fats.toFixed(1)}g</p>`;
-            
-            // Show foods
-            html += '<ul style="list-style-type: none; padding-left: 0;">';
-            data[mealType].forEach(item => {
-              const servingText = item.serving_name ? ` (${item.serving_name})` : '';
-              html += `<li style="margin-bottom: 8px;">`;
-              html += `<strong>${item.food_name}:</strong> ${item.servings.toFixed(2)} servings${servingText}<br>`;
-              html += `<span style="margin-left: 20px; color: #666;">`;
-              html += `Protein: ${item.protein.toFixed(1)}g, `;
-              html += `Carbs: ${item.carbs.toFixed(1)}g, `;
-              html += `Fats: ${item.fats.toFixed(1)}g`;
-              html += `</span></li>`;
-            });
-            html += '</ul>';
-            
-            // Show meal total
-            if (mealTotal) {
-              html += `<p><strong>Meal Total:</strong> `;
-              html += `Protein: ${mealTotal.protein.toFixed(1)}g, `;
-              html += `Carbs: ${mealTotal.carbs.toFixed(1)}g, `;
-              html += `Fats: ${mealTotal.fats.toFixed(1)}g</p>`;
-            }
-            
-            html += `</div>`;
+          html += '<ul style="list-style-type: none; padding-left: 0;">';
+          data.breakfast.forEach(item => {
+            const servingText = item.serving_name ? ` (${item.serving_name})` : '';
+            html += `<li style="margin-bottom: 8px;">`;
+            html += `<strong>${item.food_name}:</strong> ${item.servings.toFixed(2)} servings${servingText}<br>`;
+            html += `<span style="margin-left: 20px; color: #666;">`;
+            html += `Protein: ${item.protein.toFixed(1)}g, `;
+            html += `Carbs: ${item.carbs.toFixed(1)}g, `;
+            html += `Fats: ${item.fats.toFixed(1)}g`;
+            html += `</span></li>`;
+          });
+          html += '</ul>';
+          
+          if (mealTotal) {
+            html += `<p><strong>Meal Total:</strong> `;
+            html += `Protein: ${mealTotal.protein.toFixed(1)}g, `;
+            html += `Carbs: ${mealTotal.carbs.toFixed(1)}g, `;
+            html += `Fats: ${mealTotal.fats.toFixed(1)}g</p>`;
           }
-        });
+          html += `</div>`;
+        }
+
+        // Lunch (user-set)
+        if (data.lunch && data.lunch.length > 0) {
+          const mealTotal = data.lunch_total;
+          html += `<div style="margin-bottom: 20px; border: 1px solid #ccc; padding: 10px;">`;
+          html += `<h3>Lunch (Your Servings)</h3>`;
+          
+          html += '<ul style="list-style-type: none; padding-left: 0;">';
+          data.lunch.forEach(item => {
+            const servingText = item.serving_name ? ` (${item.serving_name})` : '';
+            html += `<li style="margin-bottom: 8px;">`;
+            html += `<strong>${item.food_name}:</strong> ${item.servings.toFixed(2)} servings${servingText}<br>`;
+            html += `<span style="margin-left: 20px; color: #666;">`;
+            html += `Protein: ${item.protein.toFixed(1)}g, `;
+            html += `Carbs: ${item.carbs.toFixed(1)}g, `;
+            html += `Fats: ${item.fats.toFixed(1)}g`;
+            html += `</span></li>`;
+          });
+          html += '</ul>';
+          
+          if (mealTotal) {
+            html += `<p><strong>Meal Total:</strong> `;
+            html += `Protein: ${mealTotal.protein.toFixed(1)}g, `;
+            html += `Carbs: ${mealTotal.carbs.toFixed(1)}g, `;
+            html += `Fats: ${mealTotal.fats.toFixed(1)}g</p>`;
+          }
+          html += `</div>`;
+        }
+
+        // Dinner (calculated)
+        if (data.dinner && data.dinner.length > 0) {
+          const mealTotal = data.dinner_total;
+          const mealGoal = data.dinner_goal;
+          html += `<div style="margin-bottom: 20px; border: 2px solid #0066cc; padding: 10px; background-color: #e6f2ff;">`;
+          html += `<h3>Dinner (Calculated Servings)</h3>`;
+          html += `<p><strong>Remaining Goal:</strong> Protein: ${mealGoal.protein.toFixed(1)}g, `;
+          html += `Carbs: ${mealGoal.carbs.toFixed(1)}g (max), `;
+          html += `Fats: ${mealGoal.fats.toFixed(1)}g</p>`;
+            
+          html += '<ul style="list-style-type: none; padding-left: 0;">';
+          data.dinner.forEach(item => {
+            const servingText = item.serving_name ? ` (${item.serving_name})` : '';
+            html += `<li style="margin-bottom: 8px;">`;
+            html += `<strong>${item.food_name}:</strong> ${item.servings.toFixed(2)} servings${servingText}<br>`;
+            html += `<span style="margin-left: 20px; color: #666;">`;
+            html += `Protein: ${item.protein.toFixed(1)}g, `;
+            html += `Carbs: ${item.carbs.toFixed(1)}g, `;
+            html += `Fats: ${item.fats.toFixed(1)}g`;
+            html += `</span></li>`;
+          });
+          html += '</ul>';
+          
+          if (mealTotal) {
+            html += `<p><strong>Meal Total:</strong> `;
+            html += `Protein: ${mealTotal.protein.toFixed(1)}g, `;
+            html += `Carbs: ${mealTotal.carbs.toFixed(1)}g, `;
+            html += `Fats: ${mealTotal.fats.toFixed(1)}g</p>`;
+          }
+          html += `</div>`;
+        }
 
         if (data.supplements && data.supplements.length > 0) {
           html += '<div style="margin-bottom: 20px; border: 1px solid #ccc; padding: 10px; background-color: #f0f0f0;">';

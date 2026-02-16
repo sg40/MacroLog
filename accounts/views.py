@@ -80,31 +80,71 @@ def calculate_servings(request, person_name):
         }
     )
 
-    # Collect all foods for each meal
-    meal_foods = {
-        "breakfast": [],
-        "lunch": [],
-        "dinner": [],
-    }
+    # Collect breakfast/lunch foods with user-set servings, and dinner foods (to be calculated)
+    breakfast_foods_servings = []  # List of (food, servings) tuples
+    lunch_foods_servings = []  # List of (food, servings) tuples
+    dinner_food_ids = []  # List of food IDs (servings will be calculated)
 
-    for meal_type in ["breakfast", "lunch", "dinner"]:
-        food_ids = data.get(meal_type, [])
-        for food_id in food_ids:
+    # Parse breakfast data (has food_id and servings)
+    for item in data.get("breakfast", []):
+        if isinstance(item, dict) and "food_id" in item and "servings" in item:
             try:
-                food = Food.objects.get(id=food_id, is_active=True)
-                meal_foods[meal_type].append(food)
-            except Food.DoesNotExist:
+                food = Food.objects.get(id=item["food_id"], is_active=True)
+                breakfast_foods_servings.append((food, float(item["servings"])))
+            except (Food.DoesNotExist, ValueError, KeyError):
                 continue
 
-    # Build optimization problem
-    all_foods = []
-    meal_indices = {"breakfast": [], "lunch": [], "dinner": []}
-    
-    for meal_type in ["breakfast", "lunch", "dinner"]:
-        for food in meal_foods[meal_type]:
-            idx = len(all_foods)
-            all_foods.append(food)
-            meal_indices[meal_type].append(idx)
+    # Parse lunch data (has food_id and servings)
+    for item in data.get("lunch", []):
+        if isinstance(item, dict) and "food_id" in item and "servings" in item:
+            try:
+                food = Food.objects.get(id=item["food_id"], is_active=True)
+                lunch_foods_servings.append((food, float(item["servings"])))
+            except (Food.DoesNotExist, ValueError, KeyError):
+                continue
+
+    # Parse dinner data (just food IDs)
+    for food_id in data.get("dinner", []):
+        if isinstance(food_id, int):
+            try:
+                dinner_food_ids.append(food_id)
+            except (ValueError, TypeError):
+                continue
+
+    # Calculate consumed macros from breakfast and lunch
+    consumed_protein = 0.0
+    consumed_carbs = 0.0
+    consumed_fats = 0.0
+
+    for food, servings in breakfast_foods_servings + lunch_foods_servings:
+        consumed_protein += float(servings) * float(food.protein_g_per_serving)
+        consumed_carbs += float(servings) * float(food.carbs_g_per_serving)
+        consumed_fats += float(servings) * float(food.fats_g_per_serving)
+
+    # Calculate remaining targets for dinner
+    remaining_protein = float(person.protein_grams) - consumed_protein
+    remaining_carbs = float(person.carbs_grams) - consumed_carbs
+    remaining_fats = float(person.fats_grams) - consumed_fats
+
+    # Check if we need to calculate dinner
+    if not dinner_food_ids:
+        return JsonResponse({"error": "Please select at least one food for dinner."})
+
+    # Get dinner foods
+    dinner_foods = []
+    for food_id in dinner_food_ids:
+        try:
+            food = Food.objects.get(id=food_id, is_active=True)
+            dinner_foods.append(food)
+        except Food.DoesNotExist:
+            continue
+
+    if not dinner_foods:
+        return JsonResponse({"error": "No valid foods selected for dinner."})
+
+    # Build optimization problem - only for dinner
+    all_foods = dinner_foods.copy()
+    dinner_indices = list(range(len(dinner_foods)))
 
     # Add protein powder and heavy cream as optional supplements
     protein_powder_idx = len(all_foods)
@@ -115,46 +155,17 @@ def calculate_servings(request, person_name):
     if len(all_foods) == 2:  # Only supplements
         return JsonResponse({"error": "Please select at least one food for at least one meal."})
 
-    # Target macros
-    target_protein = float(person.protein_grams)
-    target_carbs = float(person.carbs_grams)
-    target_fats = float(person.fats_grams)
+    # Target macros (remaining after breakfast and lunch)
+    target_protein = remaining_protein
+    target_carbs = remaining_carbs
+    target_fats = remaining_fats
 
-    # Objective: minimize variance of macros across meals (balance meals) + penalize supplement use
+    # Objective: minimize supplement use (dinner is the only meal being optimized)
     def objective(servings):
-        # Calculate total macros per meal
-        meal_totals = {"breakfast": [0, 0, 0], "lunch": [0, 0, 0], "dinner": [0, 0, 0]}
-        
-        for meal_type in ["breakfast", "lunch", "dinner"]:
-            for idx in meal_indices[meal_type]:
-                food = all_foods[idx]
-                s = servings[idx]
-                meal_totals[meal_type][0] += s * float(food.protein_g_per_serving)
-                meal_totals[meal_type][1] += s * float(food.carbs_g_per_serving)
-                meal_totals[meal_type][2] += s * float(food.fats_g_per_serving)
-        
-        # Add supplements to all meals equally
-        protein_powder_servings = servings[protein_powder_idx] / 3.0
-        heavy_cream_servings = servings[heavy_cream_idx] / 3.0
-        
-        for meal_type in ["breakfast", "lunch", "dinner"]:
-            meal_totals[meal_type][0] += protein_powder_servings * float(protein_powder.protein_g_per_serving)
-            meal_totals[meal_type][1] += protein_powder_servings * float(protein_powder.carbs_g_per_serving)
-            meal_totals[meal_type][2] += protein_powder_servings * float(protein_powder.fats_g_per_serving)
-            meal_totals[meal_type][0] += heavy_cream_servings * float(heavy_cream.protein_g_per_serving)
-            meal_totals[meal_type][1] += heavy_cream_servings * float(heavy_cream.carbs_g_per_serving)
-            meal_totals[meal_type][2] += heavy_cream_servings * float(heavy_cream.fats_g_per_serving)
-        
-        # Calculate variance of total macros across meals
-        total_macros_per_meal = [sum(meal_totals[m]) for m in ["breakfast", "lunch", "dinner"]]
-        mean = sum(total_macros_per_meal) / 3.0
-        variance = sum((x - mean) ** 2 for x in total_macros_per_meal) / 3.0
-        
         # Penalize supplement use - this ensures supplements are only used when necessary
         # Large penalty (1000) to strongly discourage supplement use unless needed
         supplement_penalty = 1000.0 * (servings[protein_powder_idx] + servings[heavy_cream_idx])
-        
-        return variance + supplement_penalty
+        return supplement_penalty
 
     # Constraints: protein and fats must equal targets exactly, carbs must be <= target (keto limit)
     def constraint_protein(servings):
@@ -211,95 +222,153 @@ def calculate_servings(request, person_name):
             "dinner": [],
             "supplements": [],
             "daily_totals": {"protein": 0.0, "carbs": 0.0, "fats": 0.0},
-            "daily_goals": {"protein": target_protein, "carbs": target_carbs, "fats": target_fats},
+            "daily_goals": {"protein": float(person.protein_grams), "carbs": float(person.carbs_grams), "fats": float(person.fats_grams)},
         }
 
-        # Calculate per-meal totals and food contributions
-        meal_totals = {"breakfast": [0.0, 0.0, 0.0], "lunch": [0.0, 0.0, 0.0], "dinner": [0.0, 0.0, 0.0]}
+        # Calculate breakfast totals (user-set servings)
+        breakfast_total = [0.0, 0.0, 0.0]
+        for food, servings in breakfast_foods_servings:
+            protein = float(servings) * float(food.protein_g_per_serving)
+            carbs = float(servings) * float(food.carbs_g_per_serving)
+            fats = float(servings) * float(food.fats_g_per_serving)
+            
+            breakfast_total[0] += protein
+            breakfast_total[1] += carbs
+            breakfast_total[2] += fats
+            
+            results["breakfast"].append({
+                "food_id": food.id,
+                "food_name": food.name,
+                "servings": float(servings),
+                "serving_name": food.serving_name or "serving",
+                "protein": protein,
+                "carbs": carbs,
+                "fats": fats,
+            })
 
-        for meal_type in ["breakfast", "lunch", "dinner"]:
-            for idx in meal_indices[meal_type]:
-                servings = result.x[idx]
-                if servings > 0.001:  # Only show if significant
-                    food = all_foods[idx]
-                    protein = float(servings) * float(food.protein_g_per_serving)
-                    carbs = float(servings) * float(food.carbs_g_per_serving)
-                    fats = float(servings) * float(food.fats_g_per_serving)
-                    
-                    meal_totals[meal_type][0] += protein
-                    meal_totals[meal_type][1] += carbs
-                    meal_totals[meal_type][2] += fats
-                    
-                    results[meal_type].append({
-                        "food_id": food.id,
-                        "food_name": food.name,
-                        "servings": float(servings),
-                        "serving_name": food.serving_name or "serving",
-                        "protein": protein,
-                        "carbs": carbs,
-                        "fats": fats,
-                    })
+        # Calculate lunch totals (user-set servings)
+        lunch_total = [0.0, 0.0, 0.0]
+        for food, servings in lunch_foods_servings:
+            protein = float(servings) * float(food.protein_g_per_serving)
+            carbs = float(servings) * float(food.carbs_g_per_serving)
+            fats = float(servings) * float(food.fats_g_per_serving)
+            
+            lunch_total[0] += protein
+            lunch_total[1] += carbs
+            lunch_total[2] += fats
+            
+            results["lunch"].append({
+                "food_id": food.id,
+                "food_name": food.name,
+                "servings": float(servings),
+                "serving_name": food.serving_name or "serving",
+                "protein": protein,
+                "carbs": carbs,
+                "fats": fats,
+            })
 
-        # Add supplements to meal totals
+        # Calculate dinner totals (calculated servings)
+        dinner_total = [0.0, 0.0, 0.0]
+        for idx in dinner_indices:
+            servings = result.x[idx]
+            if servings > 0.001:  # Only show if significant
+                food = all_foods[idx]
+                protein = float(servings) * float(food.protein_g_per_serving)
+                carbs = float(servings) * float(food.carbs_g_per_serving)
+                fats = float(servings) * float(food.fats_g_per_serving)
+                
+                dinner_total[0] += protein
+                dinner_total[1] += carbs
+                dinner_total[2] += fats
+                
+                results["dinner"].append({
+                    "food_id": food.id,
+                    "food_name": food.name,
+                    "servings": float(servings),
+                    "serving_name": food.serving_name or "serving",
+                    "protein": protein,
+                    "carbs": carbs,
+                    "fats": fats,
+                })
+
+        # Add supplements to dinner only (if needed)
         protein_powder_servings = result.x[protein_powder_idx]
         heavy_cream_servings = result.x[heavy_cream_idx]
-        
-        protein_powder_per_meal = protein_powder_servings / 3.0
-        heavy_cream_per_meal = heavy_cream_servings / 3.0
 
         if protein_powder_servings > 0.001:
-            protein_pp = float(protein_powder_per_meal) * float(protein_powder.protein_g_per_serving)
-            carbs_pp = float(protein_powder_per_meal) * float(protein_powder.carbs_g_per_serving)
-            fats_pp = float(protein_powder_per_meal) * float(protein_powder.fats_g_per_serving)
+            protein_pp = float(protein_powder_servings) * float(protein_powder.protein_g_per_serving)
+            carbs_pp = float(protein_powder_servings) * float(protein_powder.carbs_g_per_serving)
+            fats_pp = float(protein_powder_servings) * float(protein_powder.fats_g_per_serving)
             
-            for meal_type in ["breakfast", "lunch", "dinner"]:
-                meal_totals[meal_type][0] += protein_pp
-                meal_totals[meal_type][1] += carbs_pp
-                meal_totals[meal_type][2] += fats_pp
+            dinner_total[0] += protein_pp
+            dinner_total[1] += carbs_pp
+            dinner_total[2] += fats_pp
             
             results["supplements"].append({
                 "name": "Protein Powder",
                 "servings": float(protein_powder_servings),
                 "serving_name": protein_powder.serving_name or "serving",
-                "protein": float(protein_powder_servings) * float(protein_powder.protein_g_per_serving),
-                "carbs": float(protein_powder_servings) * float(protein_powder.carbs_g_per_serving),
-                "fats": float(protein_powder_servings) * float(protein_powder.fats_g_per_serving),
+                "protein": protein_pp,
+                "carbs": carbs_pp,
+                "fats": fats_pp,
             })
 
         if heavy_cream_servings > 0.001:
-            protein_hc = float(heavy_cream_per_meal) * float(heavy_cream.protein_g_per_serving)
-            carbs_hc = float(heavy_cream_per_meal) * float(heavy_cream.carbs_g_per_serving)
-            fats_hc = float(heavy_cream_per_meal) * float(heavy_cream.fats_g_per_serving)
+            protein_hc = float(heavy_cream_servings) * float(heavy_cream.protein_g_per_serving)
+            carbs_hc = float(heavy_cream_servings) * float(heavy_cream.carbs_g_per_serving)
+            fats_hc = float(heavy_cream_servings) * float(heavy_cream.fats_g_per_serving)
             
-            for meal_type in ["breakfast", "lunch", "dinner"]:
-                meal_totals[meal_type][0] += protein_hc
-                meal_totals[meal_type][1] += carbs_hc
-                meal_totals[meal_type][2] += fats_hc
+            dinner_total[0] += protein_hc
+            dinner_total[1] += carbs_hc
+            dinner_total[2] += fats_hc
             
             results["supplements"].append({
                 "name": "Heavy Cream",
                 "servings": float(heavy_cream_servings),
                 "serving_name": heavy_cream.serving_name or "serving",
-                "protein": float(heavy_cream_servings) * float(heavy_cream.protein_g_per_serving),
-                "carbs": float(heavy_cream_servings) * float(heavy_cream.carbs_g_per_serving),
-                "fats": float(heavy_cream_servings) * float(heavy_cream.fats_g_per_serving),
+                "protein": protein_hc,
+                "carbs": carbs_hc,
+                "fats": fats_hc,
             })
 
         # Add meal totals and goals to results
-        for meal_type in ["breakfast", "lunch", "dinner"]:
-            results[meal_type + "_total"] = {
-                "protein": meal_totals[meal_type][0],
-                "carbs": meal_totals[meal_type][1],
-                "fats": meal_totals[meal_type][2],
-            }
-            results[meal_type + "_goal"] = {
-                "protein": target_protein / 3.0,  # Ideal goal (1/3 of daily)
-                "carbs": target_carbs / 3.0,
-                "fats": target_fats / 3.0,
-            }
-            results["daily_totals"]["protein"] += meal_totals[meal_type][0]
-            results["daily_totals"]["carbs"] += meal_totals[meal_type][1]
-            results["daily_totals"]["fats"] += meal_totals[meal_type][2]
+        results["breakfast_total"] = {
+            "protein": breakfast_total[0],
+            "carbs": breakfast_total[1],
+            "fats": breakfast_total[2],
+        }
+        results["breakfast_goal"] = {
+            "protein": float(person.protein_grams) / 3.0,
+            "carbs": float(person.carbs_grams) / 3.0,
+            "fats": float(person.fats_grams) / 3.0,
+        }
+        
+        results["lunch_total"] = {
+            "protein": lunch_total[0],
+            "carbs": lunch_total[1],
+            "fats": lunch_total[2],
+        }
+        results["lunch_goal"] = {
+            "protein": float(person.protein_grams) / 3.0,
+            "carbs": float(person.carbs_grams) / 3.0,
+            "fats": float(person.fats_grams) / 3.0,
+        }
+        
+        results["dinner_total"] = {
+            "protein": dinner_total[0],
+            "carbs": dinner_total[1],
+            "fats": dinner_total[2],
+        }
+        results["dinner_goal"] = {
+            "protein": remaining_protein,
+            "carbs": remaining_carbs,
+            "fats": remaining_fats,
+        }
+        
+        # Calculate daily totals
+        results["daily_totals"]["protein"] = breakfast_total[0] + lunch_total[0] + dinner_total[0]
+        results["daily_totals"]["carbs"] = breakfast_total[1] + lunch_total[1] + dinner_total[1]
+        results["daily_totals"]["fats"] = breakfast_total[2] + lunch_total[2] + dinner_total[2]
 
         return JsonResponse(results)
 
